@@ -1,0 +1,91 @@
+
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>好人坏人问答游戏</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background-color: #f0f0f0;
+    text-align: center;
+    margin: 0;
+    padding: 0;
+  }
+  #game-container {
+    margin-top: 50px;
+  }
+  .question {
+    font-size: 24px;
+    margin-bottom: 20px;
+  }
+  .option {
+    display: inline-block;
+    margin: 10px;
+    padding: 10px 20px;
+    background-color: #4CAF50;
+    color: white;
+    border-radius: 5px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .option:active {
+    background-color: #45a049;
+  }
+</style>
+</head>
+<body>
+<div id="game-container">
+  <div class="question" id="question-text">你是好人吗？</div>
+  <div id="options">
+    <div class="option" data-next="good">是</div>
+    <div class="option" data-next="bad">不是</div>
+  </div>
+</div>
+<script>
+  const questions = {
+    "good": { text: "你作为好人做过坏事吗？", options: [
+      { text: "有", next: "good_end" },
+      { text: "没有", next: "good_end" }
+    ]},
+    "bad": { text: "你作为坏人做了什么好事吗？", options: [
+      { text: "有", next: "bad_end" },
+      { text: "没有", next: "bad_end" }
+    ]},
+    "good_end": { text: "好人之路到此结束！", options: [] },
+    "bad_end": { text: "坏人之旅到此结束！", options: [] }
+  };
+
+  function renderQuestion(key) {
+    const q = questions[key];
+    document.getElementById("question-text").innerText = q.text;
+    const optionsDiv = document.getElementById("options");
+    optionsDiv.innerHTML = "";
+    q.options.forEach(opt => {
+      const btn = document.createElement("div");
+      btn.className = "option";
+      btn.textContent = opt.text;
+      btn.dataset.next = opt.next;
+      addClickHandler(btn);
+      optionsDiv.appendChild(btn);
+    });
+  }
+
+  function handleClick(e) {
+    const nextKey = e.target.dataset.next;
+    if (nextKey) {
+      renderQuestion(nextKey);
+    }
+  }
+
+  function addClickHandler(element) {
+    element.addEventListener("click", handleClick);
+    element.addEventListener("touchstart", handleClick);
+  }
+
+  // 初始化第一个问题按钮点击事件
+  document.querySelectorAll(".option").forEach(addClickHandler);
+</script>
+</body>
+</html>
