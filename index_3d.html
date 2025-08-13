@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>你是好人吗？——3D 横版问答通关</title>
+<style>
+  :root { --w: 900px; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", sans-serif;
+    background: #0f1020; color: #eee;
+    min-height: 100vh; display: grid; place-items: center;
+  }
+  .shell { width: min(100vw, var(--w)); }
+  .hud {
+    display:flex; align-items:center; justify-content:space-between; gap:.75rem;
+    margin:.5rem auto; font-size:14px; opacity:.9;
+  }
+  .hud .badge { padding:.25rem .5rem; background:#23243b; border-radius:.5rem; }
+  .stage {
+    aspect-ratio: 16/9; width: 100%; position: relative; border-radius: 12px;
+    border: 2px solid #2a2b4b; overflow: hidden; background:#000;
+  }
+  canvas { display:block; width:100%; height:100%; }
+  .panel {
+    position:absolute; left:0; right:0; bottom:0;
+    background: rgba(12, 13, 28, .86);
+    border-top: 1px solid rgba(255,255,255,.08);
+    padding: .9rem .9rem 1rem; display:grid; gap:.6rem;
+  }
+  .q { font-weight:700; line-height:1.35; }
+  .choices { display:grid; grid-template-columns:1fr 1fr; gap:.6rem; }
+  button.choice, .btn {
+    font:inherit; border:1px solid rgba(255,255,255,.15);
+    background:#2a2b4b; color:#fff; padding:.7rem .9rem; border-radius:.6rem;
+    cursor:pointer; -webkit-tap-highlight-color: rgba(255,255,255,0.05);
+  }
+  .toolbar { display:flex; gap:.5rem; justify-content:flex-end; }
+  .toast {
+    position:absolute; top:.5rem; left:50%; transform:translateX(-50%);
+    background:rgba(0,0,0,.45); padding:.35rem .6rem; border-radius:.5rem; font-size:12px;
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="hud">
+    <div class="badge">场景 <span id="sceneIdx">1</span> / <span id="sceneTotal">1</span></div>
+    <div class="badge">分支：<span id="pathName">未定</span></div>
+  </div>
+  <div class="stage" id="stage">
+    <div id="toast" class="toast" style="display:none;"></div>
+    <div class="panel">
+      <div class="q" id="question">你是好人吗？</div>
+      <div class="choices">
+        <button class="choice" id="c1" type="button">是，我是好人</button>
+        <button class="choice" id="c2" type="button">不是，我不是好人</button>
+      </div>
+      <div class="toolbar">
+        <button class="btn" id="btnBack" type="button">上一步</button>
+        <button class="btn" id="btnRestart" type="button">重新开始</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+
+/* ---------- 数据：问题图谱 ---------- */
+const NODES = {
+  start: { id:'start', text:'你是好人吗？', good:{label:'是，我是好人', next:'g1'}, bad:{label:'不是，我不是好人', next:'b1'} },
+  g1: { id:'g1', text:'作为好人，你是否做过让你后悔的坏事？', good:{label:'有，但我努力补救', next:'g2'}, bad:{label:'从不，我洁身自好', next:'g2b'} },
+  g2: { id:'g2', text:'你帮过陌生人却不求回报吗？', good:{label:'经常，这让我开心', next:'g3'}, bad:{label:'偶尔，看心情', next:'g3b'} },
+  g2b:{ id:'g2b', text:'当朋友犯错，你会如实指出吗？', good:{label:'会，忠言逆耳', next:'g3'}, bad:{label:'看关系深浅', next:'g3b'} },
+  g3:{ id:'g3', text:'面对不公，你敢为弱者发声吗？', good:{label:'敢，我会站出来', next:'g4'}, bad:{label:'怕麻烦，少管为妙', next:'g4b'} },
+  g3b:{ id:'g3b', text:'你是否愿意为过错道歉并承担后果？', good:{label:'愿意，责任在我', next:'g4'}, bad:{label:'不会，时间会淡化', next:'g4b'} },
+  g4:{ id:'g4', text:'恭喜，你在好人之路越走越远！继续前进？', good:{label:'继续，向更远处', next:'gend'}, bad:{label:'先到这吧', next:'gend'} },
+  g4b:{ id:'g4b', text:'好人与人的距离，常在一个决定之间。', good:{label:'我想做得更好', next:'gend'}, bad:{label:'保持现状就好', next:'gend'} },
+  gend:{ id:'gend', text:'好人结局：路很长，持续选择善。', good:{label:'重新开始', next:'start'}, bad:{label:'换走坏人线', next:'b1'} },
+
+  b1: { id:'b1', text:'作为“坏人”，你做过什么好事吗？', good:{label:'有，偶尔会心软', next:'b2'}, bad:{label:'没有，我行我素', next:'b2b'} },
+  b2: { id:'b2', text:'如果有人曾帮助你，你会回报吗？', good:{label:'会，恩情要还', next:'b3'}, bad:{label:'不欠谁的', next:'b3b'} },
+  b2b:{ id:'b2b', text:'你是否把“坏”当成保护色？', good:{label:'也许吧，我怕受伤', next:'b3'}, bad:{label:'不，我喜欢掌控', next:'b3b'} },
+  b3:{ id:'b3', text:'当你做了坏事，良心会不安吗？', good:{label:'会，我想补偿', next:'b4'}, bad:{label:'不会，适者生存', next:'b4b'} },
+  b3b:{ id:'b3b', text:'你是否愿意为了重要的人改变？', good:{label:'愿意，值得', next:'b4'}, bad:{label:'不，谁也别想', next:'b4b'} },
+  b4:{ id:'b4', text:'也许你并不坏，只是不被理解。', good:{label:'我想重新开始', next:'bend'}, bad:{label:'让我再想想', next:'bend'} },
+  b4b:{ id:'b4b', text:'坏并不难，难的是停下来回头看。', good:{label:'或许该停一停', next:'bend'}, bad:{label:'继续向下走', next:'bend'} },
+  bend:{ id:'bend', text:'坏人结局：向下走多了，也别忘了抬头看看。', good:{label:'返回开局', next:'start'}, bad:{label:'试试好人线', next:'g1'} }
+};
+
+/* ---------- UI refs ---------- */
+const stage = document.getElementById('stage');
+const questionEl = document.getElementById('question');
+const c1 = document.getElementById('c1');
+const c2 = document.getElementById('c2');
+const btnBack = document.getElementById('btnBack');
+const btnRestart = document.getElementById('btnRestart');
+const toast = document.getElementById('toast');
+const sceneIdxEl = document.getElementById('sceneIdx');
+const sceneTotalEl = document.getElementById('sceneTotal');
+const pathNameEl = document.getElementById('pathName');
+
+/* ---------- Three.js 基础 ---------- */
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+renderer.setSize(stage.clientWidth, stage.clientHeight);
+stage.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x88ccff);
+
+const camera = new THREE.PerspectiveCamera(60, stage.clientWidth / stage.clientHeight, 0.1, 1000);
+camera.position.set(0, 6, 14);
+camera.lookAt(0, 0, 0);
+
+// 光照
+const hemi = new THREE.HemisphereLight(0xffffff, 0x334433, 1.1);
+scene.add(hemi);
+const dir = new THREE.DirectionalLight(0xffffff, 0.9);
+dir.position.set(5,10,7);
+scene.add(dir);
+
+// 地面（大平面）
+const groundGeo = new THREE.PlaneGeometry(200, 200);
+const groundMat = new THREE.MeshStandardMaterial({ color:0x6bbf6b });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI/2;
+ground.position.y = -1;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// 引导牌
+function makeBillboard(text, color, x,z){
+  const g = new THREE.PlaneGeometry(4, 1.3);
+  const cv = document.createElement('canvas');
+  cv.width = 512; cv.height = 200;
+  const cx = cv.getContext('2d');
+  cx.fillStyle = '#00000000'; cx.fillRect(0,0,cv.width,cv.height);
+  cx.fillStyle = color; cx.font = 'bold 44px system-ui';
+  cx.textAlign = 'center'; cx.textBaseline = 'middle';
+  cx.fillText(text, cv.width/2, cv.height/2);
+  const tex = new THREE.CanvasTexture(cv);
+  const m = new THREE.MeshBasicMaterial({ map: tex, transparent:true });
+  const mesh = new THREE.Mesh(g, m);
+  mesh.position.set(x, 1.5, z);
+  mesh.rotation.y = Math.PI; // 面向相机默认方向
+  scene.add(mesh);
+  return mesh;
+}
+makeBillboard('→ 好人线 向右', '#ffffff', 4, -2);
+makeBillboard('↓ 坏人线 向下', '#ffffff', -2, 4);
+
+// 玩家（小方块）
+const playerGeo = new THREE.BoxGeometry(1,1.4,1);
+const playerMat = new THREE.MeshStandardMaterial({ color:0xffd369 });
+const player = new THREE.Mesh(playerGeo, playerMat);
+player.position.set(-3, -0.3, 0);
+scene.add(player);
+
+// 装饰：远处立方体“树”
+for(let i=0;i<20;i++){
+  const t = new THREE.Mesh(new THREE.BoxGeometry(0.6, Math.random()*2+1, 0.6),
+                           new THREE.MeshStandardMaterial({ color: 0x2a5d2a }));
+  t.position.set((Math.random()*150-50), -0.3, (Math.random()*150-50));
+  scene.add(t);
+}
+
+/* ---------- 状态 ---------- */
+let historyStack = [];
+let current = NODES.start;
+let sceneIndex = 1, sceneTotal = 1;
+let path = '未定';
+let animating = false;
+
+function setPanel(node){
+  questionEl.textContent = node.text;
+  c1.textContent = node.good.label;
+  c2.textContent = node.bad.label;
+  sceneIdxEl.textContent = String(sceneIndex);
+  sceneTotalEl.textContent = String(sceneTotal);
+  pathNameEl.textContent = path;
+}
+
+function showToast(msg, ms=900){
+  toast.textContent = msg;
+  toast.style.display = 'block';
+  setTimeout(()=> toast.style.display='none', ms);
+}
+
+/* ---------- 移动动画：good=向右(X+), bad=向下(Z+) ---------- */
+function moveAndLoad(choice){
+  if(animating) return;
+  const dir = (choice === 'good') ? 'right' : 'down';
+  if(path === '未定') path = (choice === 'good') ? '好人线' : '坏人线';
+
+  const dist = 4; // 每次移动距离
+  const start = new THREE.Vector3().copy(player.position);
+  const target = start.clone();
+  if(dir === 'right') target.x += dist;
+  else target.z += dist;
+
+  // 进入新画面（依据位置阈值模拟“切屏”）
+  function afterMove(){
+    if(dir==='right' && (player.position.x) > 6 + (sceneIndex-1)*dist){
+      sceneIndex++; sceneTotal = Math.max(sceneTotal, sceneIndex);
+      camera.position.x += 8;
+      showToast('进入新画面 →');
+    }
+    if(dir==='down' && (player.position.z) > 6 + (sceneIndex-1)*dist){
+      sceneIndex++; sceneTotal = Math.max(sceneTotal, sceneIndex);
+      camera.position.z += 8;
+      showToast('进入新画面 ↓');
+    }
+    historyStack.push({
+      id: current.id, path,
+      px: player.position.x, py: player.position.y, pz: player.position.z,
+      cx: camera.position.x, cy: camera.position.y, cz: camera.position.z,
+      sceneIndex, sceneTotal
+    });
+    current = NODES[current[choice].next];
+    setPanel(current);
+  }
+
+  animateVec3(player.position, target, 420, afterMove);
+}
+
+function animateVec3(vec, target, duration=400, onDone){
+  animating = true;
+  const start = performance.now();
+  const init = vec.clone();
+  function step(t){
+    const k = Math.min(1, (t - start) / duration);
+    const ease = k < .5 ? 2*k*k : -1 + (4 - 2*k)*k;
+    vec.lerpVectors(init, target, ease);
+    renderer.render(scene, camera);
+    if(k < 1) requestAnimationFrame(step);
+    else { animating = false; onDone && onDone(); }
+  }
+  requestAnimationFrame(step);
+}
+
+function backOneStep(){
+  if(!historyStack.length){ showToast('已经在最初'); return; }
+  const h = historyStack.pop();
+  current = NODES[h.id]; path = h.path;
+  player.position.set(h.px, h.py, h.pz);
+  camera.position.set(h.cx, h.cy, h.cz);
+  sceneIndex = h.sceneIndex; sceneTotal = h.sceneTotal;
+  setPanel(current); showToast('已返回上一步', 700);
+}
+
+function restart(){
+  historyStack = [];
+  current = NODES.start;
+  sceneIndex = 1; sceneTotal = 1; path = '未定';
+  player.position.set(-3, -0.3, 0);
+  camera.position.set(0, 6, 14);
+  setPanel(current); showToast('已重开');
+}
+
+/* ---------- 事件：触摸 + 点击 ---------- */
+function bindButtonWithTouch(el, fn){
+  let touched = false;
+  el.addEventListener('touchstart', (e)=>{ e.preventDefault(); touched = true; fn(); }, { passive:false });
+  el.addEventListener('click', ()=>{ if(touched){ touched=false; return; } fn(); });
+}
+bindButtonWithTouch(c1, ()=>moveAndLoad('good'));
+bindButtonWithTouch(c2, ()=>moveAndLoad('bad'));
+bindButtonWithTouch(btnBack, backOneStep);
+bindButtonWithTouch(btnRestart, restart);
+
+window.addEventListener('resize', ()=>{
+  renderer.setSize(stage.clientWidth, stage.clientHeight);
+  camera.aspect = stage.clientWidth / stage.clientHeight;
+  camera.updateProjectionMatrix();
+});
+
+/* ---------- 渲染主循环 ---------- */
+function tick(){
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+setPanel(current);
+tick();
+</script>
+</body>
+</html>
